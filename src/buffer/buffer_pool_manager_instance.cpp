@@ -65,7 +65,7 @@ bool BufferPoolManagerInstance::FlushPgImp(page_id_t page_id) {
   Page *page = &pages_[frame];
   disk_manager_->WritePage(page_id,page->GetData());
   page->is_dirty_ = false; // 写入磁盘之后重新设置脏页面
-  return false;
+  return true;
 }
 
 void BufferPoolManagerInstance::FlushAllPgsImp() {
@@ -190,7 +190,26 @@ bool BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) {
   return true;
 }
 
-bool BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) { return false; }
+bool BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) { 
+  std::scoped_lock lk{latch_};
+  auto iter = page_table_.find(page_id);
+  if(iter == page_table_.end()){
+    return false;
+  }
+  frame_id_t frame = iter->second;
+  Page *page = &pages_[frame];
+  if(page->GetPinCount() <= 0){ // 没被pin过
+    return false;
+  }
+  page->pin_count_ -= 1;
+  if(is_dirty) {
+    page->is_dirty_ = true;
+  }
+  if(page->GetPinCount() <= 0){
+    replacer_->Unpin(frame);
+  }
+  return true;
+}
 
 page_id_t BufferPoolManagerInstance::AllocatePage() {
   const page_id_t next_page_id = next_page_id_;
